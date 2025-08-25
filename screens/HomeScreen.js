@@ -49,9 +49,9 @@ const HomeScreen = () => {
   const [polygonModalVisible, setPolygonModalVisible] = useState(false);
   const [newPolygonName, setNewPolygonName] = useState('');
   const [previousDeviceStates, setPreviousDeviceStates] = useState({}); // Cihaz durumlarını takip için
+  const [isEditMode, setIsEditMode] = useState(false); // Polygon düzenleme modu
   const [editingPolygon, setEditingPolygon] = useState(null); // Düzenlenen polygon
-  const [isEditMode, setIsEditMode] = useState(false); // Düzenleme modu
-  const [isPolygonListVisible, setIsPolygonListVisible] = useState(false); // Polygon listesi görünürlük
+  const [isPolygonListVisible, setIsPolygonListVisible] = useState(false); // Polygon listesi görünürlüğü
   const [violationVisible, setViolationVisible] = useState(true); // Alan ihlali uyarısı görünürlük
   const [deviceIconBase64, setDeviceIconBase64] = useState(''); // PNG ikon için base64 data
   const insets = useSafeAreaInsets();
@@ -409,10 +409,10 @@ const HomeScreen = () => {
       });
       
       // Polygon verilerini yükle
-      await loadPolygonData(currentUserId, currentUserRole);
+      const polygonData = await loadPolygonData(currentUserId, currentUserRole);
       
       // Veri yüklendikten sonra HTML'i oluştur
-      const html = generateMapHTML(userLocation.latitude, userLocation.longitude, devicesData || [], sensorsData || [], animalsData || [], currentUserId, currentUserRole);
+      const html = generateMapHTML(userLocation.latitude, userLocation.longitude, devicesData || [], sensorsData || [], animalsData || [], currentUserId, currentUserRole, polygonData.polygons, polygonData.polygonPoints);
       setMapHTML(html);
       
       // Başlangıç cihaz durumlarını ayarla
@@ -470,9 +470,21 @@ const HomeScreen = () => {
       setPolygons(polygonsData || []);
       setPolygonPoints(polygonPointsData || []);
       
-      console.log(`✅ ${polygonsData?.length || 0} poligon ve ${polygonPointsData?.length || 0} nokta yüklendi`);
+      console.log(`✅ loadPolygonData: ${polygonsData?.length || 0} poligon ve ${polygonPointsData?.length || 0} nokta yüklendi`);
+      console.log('📋 Yüklenen polygonlar:', polygonsData?.map(p => ({ id: p.polygonId, name: p.polygonName, userId: p.userId })));
+      
+      // Return data for immediate use
+      return {
+        polygons: polygonsData || [],
+        polygonPoints: polygonPointsData || []
+      };
+      
     } catch (error) {
       console.error('Polygon verileri yüklenirken hata:', error);
+      return {
+        polygons: [],
+        polygonPoints: []
+      };
     }
   };
 
@@ -829,12 +841,14 @@ const HomeScreen = () => {
   };
 
   // Harita için HTML içeriği oluştur
-  const generateMapHTML = (lat, lng, devicesList = devices, sensorsList = deviceSensors, animalsList = animals, currentUserId = userId, currentUserRole = userRole) => {
+  const generateMapHTML = (lat, lng, devicesList = devices, sensorsList = deviceSensors, animalsList = animals, currentUserId = userId, currentUserRole = userRole, polygonsList = polygons, polygonPointsList = polygonPoints) => {
     // console.log('🗺️ Harita HTML oluşturuluyor...');
     // console.log('🗺️ Kullanıcı ID:', currentUserId);
     // console.log('🗺️ Kullanıcı Rolü:', currentUserRole);
     // console.log('🗺️ Gönderilen cihazlar:', devicesList);
     // console.log('🗺️ Gönderilen sensor verileri:', sensorsList);
+    console.log('🗺️ generateMapHTML: Polygon sayısı:', polygonsList.length);
+    console.log('🗺️ generateMapHTML: Polygon noktaları sayısı:', polygonPointsList.length);
 
     // Kullanıcıya özgü filtreleme uygula
     let filteredDevices = devicesList;
@@ -998,6 +1012,34 @@ const HomeScreen = () => {
                 z-index: 1000;
                 transform-origin: center center;
                 filter: drop-shadow(0 3px 6px rgba(0,0,0,0.5));
+            }
+            .active-edit-polygon {
+                animation: editPulse 2s infinite;
+            }
+            .editable-point {
+                cursor: move;
+                transition: all 0.2s ease;
+            }
+            .editable-point:hover {
+                transform: scale(1.2);
+            }
+            .edit-point-label {
+                cursor: move;
+                z-index: 1001;
+            }
+            @keyframes editPulse {
+                0% { 
+                    opacity: 0.8;
+                    stroke-width: 3;
+                }
+                50% { 
+                    opacity: 1;
+                    stroke-width: 4;
+                }
+                100% { 
+                    opacity: 0.8;
+                    stroke-width: 3;
+                }
             }
             .polygon-popup {
                 font-family: Arial, sans-serif;
@@ -1275,6 +1317,8 @@ const HomeScreen = () => {
         </div>
         <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
         <script>
+            console.log('🚀 WebView JavaScript başlatılıyor...');
+            
             var map = L.map('map').setView([${lat}, ${lng}], 13);
             
             // Global marker ve polygon referansları
@@ -1331,6 +1375,36 @@ const HomeScreen = () => {
                 const deviceCountEl = document.getElementById('deviceCount');
                 const statusEl = document.getElementById('drawingStatus');
                 
+                // Düzenleme modundaysak
+                if (window.editingPolygonId) {
+                    const polygonObj = window.polygons.find(p => p.data.polygonId === window.editingPolygonId);
+                    if (polygonObj) {
+                        if (pointCountEl) pointCountEl.textContent = polygonObj.points.length;
+                        
+                        // Düzenlenen alan içindeki cihaz sayısını hesapla
+                        let devicesInArea = 0;
+                        if (polygonObj.points.length >= 3) {
+                            devicesInArea = deviceData.filter(device => {
+                                if (!device.isOnline) return false;
+                                return isPointInsidePolygon(device.lat, device.lng, polygonObj.points.map(p => ({
+                                    polygonPointLatitude: p[0],
+                                    polygonPointLongitude: p[1]
+                                })));
+                            }).length;
+                        }
+                        
+                        if (deviceCountEl) deviceCountEl.textContent = devicesInArea;
+                        
+                        // Düzenleme durumu
+                        if (statusEl) {
+                            statusEl.textContent = '✏️ Düzenleme Modu';
+                            statusEl.style.color = '#3498db';
+                        }
+                    }
+                    return;
+                }
+                
+                // Normal çizim modu
                 if (pointCountEl) pointCountEl.textContent = window.drawingPoints.length;
                 
                 // Çizilen alan içindeki cihaz sayısını hesapla
@@ -1421,8 +1495,8 @@ const HomeScreen = () => {
             var deviceIcon = createDirectionalDeviceIcon(0, true);
 
             // Polygon verileri
-            const polygonData = ${JSON.stringify(polygons)};
-            const polygonPointsData = ${JSON.stringify(polygonPoints)};
+            const polygonData = ${JSON.stringify(polygonsList)};
+            const polygonPointsData = ${JSON.stringify(polygonPointsList)};
             
             // Mevcut polygonları yükle
             loadExistingPolygons();
@@ -1452,7 +1526,7 @@ const HomeScreen = () => {
                             '<div class="polygon-info"><strong>Oluşturma:</strong> ' + new Date(polygon.polygonCreatedTime).toLocaleDateString('tr-TR') + '</div>' +
                             '<div class="polygon-info"><strong>Nokta Sayısı:</strong> ' + points.length + '</div>' +
                             '<div class="polygon-info"><strong>Durum:</strong> <span style="color: #95a5a6;">Pasif Görünüm</span></div>' +
-                            '<button class="edit-polygon-btn" onclick="activatePolygonEdit(' + polygon.polygonId + ')">Düzenle</button>' +
+                            '<div style="font-size: 11px; color: #7f8c8d; margin-top: 8px; text-align: center;">💡 Düzenlemek için sağdaki alan ikonuna tıklayın</div>' +
                             '</div>'
                         );
                         
@@ -1475,12 +1549,59 @@ const HomeScreen = () => {
             
             // Polygon düzenleme modunu aktifleştir
             function activatePolygonEdit(polygonId) {
+                console.log('✅ activatePolygonEdit çağrıldı! polygonId:', polygonId);
+                console.log('🔍 Mevcut polygonlar:', window.polygons?.length || 0);
+                
+                // React Native'e debug mesajı gönder
+                if (window.ReactNativeWebView) {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'debug',
+                        message: 'activatePolygonEdit başlatıldı - ID: ' + polygonId
+                    }));
+                }
+                
                 // Tüm polygonları passive yap
                 deactivateAllPolygons();
                 
                 // Belirtilen polygon'u active yap
                 const polygonObj = window.polygons.find(p => p.data.polygonId === polygonId);
-                if (!polygonObj) return;
+                console.log('🔍 Bulunan polygon:', polygonObj ? 'VAR' : 'YOK');
+                
+                if (!polygonObj) {
+                    console.error('❌ Polygon bulunamadı! ID:', polygonId);
+                    if (window.ReactNativeWebView) {
+                        window.ReactNativeWebView.postMessage(JSON.stringify({
+                            type: 'debug',
+                            message: 'Polygon bulunamadı! ID: ' + polygonId
+                        }));
+                    }
+                    return;
+                }
+                
+                // Çizim modunu aktifleştir
+                window.isDrawingMode = true;
+                window.editingPolygonId = polygonId;
+                window.editingPoints = [...polygonObj.points]; // Kopyasını al
+                
+                console.log('🔧 Düzenleme modu aktifleştirildi');
+                
+                // UI'yi düzenleme moduna al
+                const drawBtn = document.getElementById('drawPolygonBtn');
+                const saveBtn = document.getElementById('savePolygonBtn');
+                const infoPanel = document.getElementById('drawingInfoPanel');
+                const extraControls = document.getElementById('extraControls');
+                const undoBtn = document.getElementById('undoBtn');
+                
+                if (drawBtn) {
+                    drawBtn.textContent = 'Düzenlemeyi İptal Et';
+                    drawBtn.classList.add('active');
+                }
+                if (saveBtn) saveBtn.style.display = 'inline-block';
+                if (infoPanel) infoPanel.style.display = 'block';
+                if (extraControls) extraControls.style.display = 'flex';
+                if (undoBtn) undoBtn.style.display = 'inline-block';
+                
+                map.getContainer().style.cursor = 'crosshair';
                 
                 // Passive polygon'u kaldır
                 map.removeLayer(polygonObj.leafletPolygon);
@@ -1493,6 +1614,8 @@ const HomeScreen = () => {
                     weight: 3,
                     className: 'active-polygon'
                 }).addTo(map);
+                
+                window.editPolygon = activePolygon;
                 
                 // Sürüklenebilir noktaları ekle
                 const editablePoints = [];
@@ -1523,6 +1646,10 @@ const HomeScreen = () => {
                     editablePoints.push(editPoint, labelMarker);
                 });
                 
+                // Yeni nokta ekleme için harita tıklama olayını ekle
+                map.off('click', onMapClick); // Önce mevcut olayı kaldır
+                map.on('click', onEditMapClick); // Düzenleme için özel tıklama olayı
+                
                 // Polygon objesini güncelle
                 polygonObj.leafletPolygon = activePolygon;
                 polygonObj.editablePoints = editablePoints;
@@ -1534,8 +1661,9 @@ const HomeScreen = () => {
                     '<div class="polygon-title">' + polygonObj.data.polygonName + ' (Düzenleme)</div>' +
                     '<div class="polygon-info"><strong>Durum:</strong> <span style="color: #3498db;">Aktif Düzenleme</span></div>' +
                     '<div class="polygon-info"><strong>Nokta Sayısı:</strong> ' + polygonObj.points.length + '</div>' +
-                    '<button class="save-polygon-btn" onclick="savePolygonChanges(' + polygonId + ')">💾 Kaydet</button>' +
-                    '<button class="cancel-edit-btn" onclick="deactivatePolygonEdit(' + polygonId + ')">❌ İptal</button>' +
+                    '<div class="polygon-info" style="font-size: 11px; color: #7f8c8d; margin-top: 8px;">💡 Haritaya tıklayarak yeni nokta ekleyin<br>🖱️ Noktaları sürükleyerek taşıyın</div>' +
+                    '<button class="save-polygon-btn" onclick="savePolygonEditChanges(' + polygonId + ')">💾 Kaydet</button>' +
+                    '<button class="cancel-edit-btn" onclick="cancelPolygonEdit(' + polygonId + ')">❌ İptal</button>' +
                     '</div>'
                 );
                 
@@ -1544,6 +1672,18 @@ const HomeScreen = () => {
                     padding: [20, 20],
                     maxZoom: 16
                 });
+                
+                // Info panel güncelle
+                updateInfoPanel();
+                
+                // React Native'e düzenleme modunu bildir
+                if (window.ReactNativeWebView) {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'editPolygon',
+                        polygonData: polygonObj.data,
+                        points: polygonObj.points
+                    }));
+                }
                 
                 console.log('✏️ Polygon düzenleme modu aktif:', polygonObj.data.polygonName);
             }
@@ -1588,7 +1728,7 @@ const HomeScreen = () => {
                     '<div class="polygon-info"><strong>Oluşturma:</strong> ' + new Date(polygonObj.data.polygonCreatedTime).toLocaleDateString('tr-TR') + '</div>' +
                     '<div class="polygon-info"><strong>Nokta Sayısı:</strong> ' + polygonObj.points.length + '</div>' +
                     '<div class="polygon-info"><strong>Durum:</strong> <span style="color: #95a5a6;">Pasif Görünüm</span></div>' +
-                    '<button class="edit-polygon-btn" onclick="activatePolygonEdit(' + polygonObj.data.polygonId + ')">Düzenle</button>' +
+                    '<div style="font-size: 11px; color: #7f8c8d; margin-top: 8px; text-align: center;">💡 Düzenlemek için sağdaki alan ikonuna tıklayın</div>' +
                     '</div>'
                 );
                 
@@ -1655,11 +1795,18 @@ const HomeScreen = () => {
             
             // Çizim modunu aç/kapat
             function toggleDrawingMode() {
+                // Düzenleme modundaysak iptal et
+                if (window.editingPolygonId) {
+                    cancelPolygonEdit(window.editingPolygonId);
+                    return;
+                }
+                
                 window.isDrawingMode = !window.isDrawingMode;
                 const btn = document.getElementById('drawPolygonBtn');
                 const saveBtn = document.getElementById('savePolygonBtn');
                 const infoPanel = document.getElementById('drawingInfoPanel');
                 const extraControls = document.getElementById('extraControls');
+                const undoBtn = document.getElementById('undoBtn');
                 
                 // React Native'e çizim modu durumunu bildir
                 if (window.ReactNativeWebView) {
@@ -1675,6 +1822,7 @@ const HomeScreen = () => {
                     saveBtn.style.display = 'inline-block';
                     infoPanel.style.display = 'block';
                     extraControls.style.display = 'flex';
+                    if (undoBtn) undoBtn.style.display = 'inline-block';
                     map.getContainer().style.cursor = 'crosshair';
                     
                     // Çift tıklama ile yakınlaştırma özelliğini kapat
@@ -1688,6 +1836,7 @@ const HomeScreen = () => {
                     saveBtn.style.display = 'none';
                     infoPanel.style.display = 'none';
                     extraControls.style.display = 'none';
+                    if (undoBtn) undoBtn.style.display = 'none';
                     map.getContainer().style.cursor = '';
                     
                     // Çift tıklama ile yakınlaştırma özelliğini tekrar aç
@@ -1695,6 +1844,7 @@ const HomeScreen = () => {
                     
                     // Tıklama olayını durdur
                     map.off('click', onMapClick);
+                    map.off('click', onEditMapClick);
                     
                     // Geçici çizimi temizle
                     resetDrawing();
@@ -1761,6 +1911,89 @@ const HomeScreen = () => {
                 
                 // Bilgi panelini güncelle
                 updateInfoPanel();
+            }
+            
+            // Düzenleme modu harita tıklama olayı
+            function onEditMapClick(e) {
+                if (!window.isDrawingMode || !window.editingPolygonId) return;
+                
+                // Polygon objesini bul
+                const polygonObj = window.polygons.find(p => p.data.polygonId === window.editingPolygonId);
+                if (!polygonObj) return;
+                
+                // Yeni nokta ekle
+                const newPoint = [e.latlng.lat, e.latlng.lng];
+                polygonObj.points.push(newPoint);
+                window.editingPoints.push(newPoint);
+                
+                // Mevcut editable noktaları temizle
+                if (polygonObj.editablePoints) {
+                    polygonObj.editablePoints.forEach(point => {
+                        map.removeLayer(point);
+                    });
+                }
+                
+                // Polygon'u güncelle
+                if (window.editPolygon) {
+                    map.removeLayer(window.editPolygon);
+                }
+                
+                window.editPolygon = L.polygon(polygonObj.points, {
+                    color: '#3498db',
+                    fillColor: '#3498db',
+                    fillOpacity: 0.3,
+                    weight: 3,
+                    className: 'active-polygon'
+                }).addTo(map);
+                
+                // Tüm noktaları yeniden oluştur
+                const editablePoints = [];
+                polygonObj.points.forEach((point, index) => {
+                    const editPoint = L.circleMarker(point, {
+                        color: '#3498db',
+                        fillColor: '#3498db',
+                        fillOpacity: 0.9,
+                        radius: 10,
+                        weight: 3,
+                        className: 'editable-point'
+                    }).addTo(map);
+                    
+                    // Nokta numarası etiketi
+                    const pointLabel = L.divIcon({
+                        className: 'edit-point-label',
+                        html: '<div style="background: #3498db; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.5); cursor: move;">' + (index + 1) + '</div>',
+                        iconSize: [24, 24],
+                        iconAnchor: [12, 12]
+                    });
+                    
+                    const labelMarker = L.marker(point, {icon: pointLabel}).addTo(map);
+                    
+                    // Sürükle-bırak işlevselliği
+                    makeExistingPointDraggable(editPoint, labelMarker, index, polygonObj, window.editPolygon);
+                    makeExistingPointDraggable(labelMarker, editPoint, index, polygonObj, window.editPolygon);
+                    
+                    editablePoints.push(editPoint, labelMarker);
+                });
+                
+                polygonObj.editablePoints = editablePoints;
+                polygonObj.leafletPolygon = window.editPolygon;
+                
+                // Popup güncelle
+                window.editPolygon.bindPopup(
+                    '<div class="polygon-popup">' +
+                    '<div class="polygon-title">' + polygonObj.data.polygonName + ' (Düzenleme)</div>' +
+                    '<div class="polygon-info"><strong>Durum:</strong> <span style="color: #3498db;">Aktif Düzenleme</span></div>' +
+                    '<div class="polygon-info"><strong>Nokta Sayısı:</strong> ' + polygonObj.points.length + '</div>' +
+                    '<div class="polygon-info" style="font-size: 11px; color: #7f8c8d; margin-top: 8px;">💡 Haritaya tıklayarak yeni nokta ekleyin<br>🖱️ Noktaları sürükleyerek taşıyın</div>' +
+                    '<button class="save-polygon-btn" onclick="savePolygonEditChanges(' + window.editingPolygonId + ')">💾 Kaydet</button>' +
+                    '<button class="cancel-edit-btn" onclick="cancelPolygonEdit(' + window.editingPolygonId + ')">❌ İptal</button>' +
+                    '</div>'
+                );
+                
+                // Info panel güncelle
+                updateInfoPanel();
+                
+                console.log('✏️ Yeni nokta eklendi:', newPoint, 'Toplam nokta:', polygonObj.points.length);
             }
             
             // Nokta sürükle-bırak işlevselliği
@@ -1900,6 +2133,86 @@ const HomeScreen = () => {
             
             // Son noktayı geri al
             function undoLastPoint() {
+                // Düzenleme modunda mı?
+                if (window.editingPolygonId) {
+                    const polygonObj = window.polygons.find(p => p.data.polygonId === window.editingPolygonId);
+                    if (!polygonObj || polygonObj.points.length <= 3) {
+                        alert('En az 3 nokta olmalı!');
+                        return;
+                    }
+                    
+                    // Son noktayı kaldır
+                    polygonObj.points.pop();
+                    window.editingPoints.pop();
+                    
+                    // Mevcut editable noktaları temizle
+                    if (polygonObj.editablePoints) {
+                        polygonObj.editablePoints.forEach(point => {
+                            map.removeLayer(point);
+                        });
+                    }
+                    
+                    // Polygon'u güncelle
+                    if (window.editPolygon) {
+                        map.removeLayer(window.editPolygon);
+                    }
+                    
+                    window.editPolygon = L.polygon(polygonObj.points, {
+                        color: '#3498db',
+                        fillColor: '#3498db',
+                        fillOpacity: 0.3,
+                        weight: 3,
+                        className: 'active-polygon'
+                    }).addTo(map);
+                    
+                    // Tüm noktaları yeniden oluştur
+                    const editablePoints = [];
+                    polygonObj.points.forEach((point, index) => {
+                        const editPoint = L.circleMarker(point, {
+                            color: '#3498db',
+                            fillColor: '#3498db',
+                            fillOpacity: 0.9,
+                            radius: 10,
+                            weight: 3,
+                            className: 'editable-point'
+                        }).addTo(map);
+                        
+                        const pointLabel = L.divIcon({
+                            className: 'edit-point-label',
+                            html: '<div style="background: #3498db; color: white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.5); cursor: move;">' + (index + 1) + '</div>',
+                            iconSize: [24, 24],
+                            iconAnchor: [12, 12]
+                        });
+                        
+                        const labelMarker = L.marker(point, {icon: pointLabel}).addTo(map);
+                        
+                        makeExistingPointDraggable(editPoint, labelMarker, index, polygonObj, window.editPolygon);
+                        makeExistingPointDraggable(labelMarker, editPoint, index, polygonObj, window.editPolygon);
+                        
+                        editablePoints.push(editPoint, labelMarker);
+                    });
+                    
+                    polygonObj.editablePoints = editablePoints;
+                    polygonObj.leafletPolygon = window.editPolygon;
+                    
+                    // Popup güncelle
+                    window.editPolygon.bindPopup(
+                        '<div class="polygon-popup">' +
+                        '<div class="polygon-title">' + polygonObj.data.polygonName + ' (Düzenleme)</div>' +
+                        '<div class="polygon-info"><strong>Durum:</strong> <span style="color: #3498db;">Aktif Düzenleme</span></div>' +
+                        '<div class="polygon-info"><strong>Nokta Sayısı:</strong> ' + polygonObj.points.length + '</div>' +
+                        '<div class="polygon-info" style="font-size: 11px; color: #7f8c8d; margin-top: 8px;">💡 Haritaya tıklayarak yeni nokta ekleyin<br>🖱️ Noktaları sürükleyerek taşıyın</div>' +
+                        '<button class="save-polygon-btn" onclick="savePolygonEditChanges(' + window.editingPolygonId + ')">💾 Kaydet</button>' +
+                        '<button class="cancel-edit-btn" onclick="cancelPolygonEdit(' + window.editingPolygonId + ')">❌ İptal</button>' +
+                        '</div>'
+                    );
+                    
+                    console.log('🔙 Son nokta silindi, kalan nokta sayısı:', polygonObj.points.length);
+                    updateInfoPanel();
+                    return;
+                }
+                
+                // Normal çizim modu
                 if (window.drawingPoints.length === 0) return;
                 
                 // Son noktayı kaldır
@@ -2037,18 +2350,109 @@ const HomeScreen = () => {
             
             // Tüm polygonları temizle
             function clearAllPolygons() {
-                if (confirm('Tüm güvenli alanları silmek istediğinizden emin misiniz?')) {
-                    window.polygons.forEach(polygon => {
-                        map.removeLayer(polygon.leafletPolygon);
-                    });
-                    window.polygons = [];
-                    
-                    if (window.ReactNativeWebView) {
-                        window.ReactNativeWebView.postMessage(JSON.stringify({
-                            type: 'clearAllPolygons'
-                        }));
-                    }
+                // React Native'e mesaj gönder, onay popup'ını React Native kısmı göstersin
+                if (window.ReactNativeWebView) {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'clearAllPolygons'
+                    }));
                 }
+            }
+            
+            // Popup'tan düzenleme butonuna tıklanınca
+            function handleEditPolygonClick(polygonId) {
+                console.log('🔧 Popup düzenleme butonu tıklandı, Polygon ID:', polygonId);
+                
+                // Popup'ı kapat
+                map.closePopup();
+                
+                // Kısa bir gecikme ile düzenleme modunu aktifleştir
+                setTimeout(function() {
+                    try {
+                        activatePolygonEdit(polygonId);
+                        console.log('✅ Düzenleme modu aktifleştirildi');
+                    } catch (error) {
+                        console.error('❌ Düzenleme modu aktifleştirilemedi:', error);
+                        
+                        // Hata durumunda React Native'e mesaj gönder
+                        if (window.ReactNativeWebView) {
+                            window.ReactNativeWebView.postMessage(JSON.stringify({
+                                type: 'editPolygonError',
+                                polygonId: polygonId,
+                                error: error.message
+                            }));
+                        }
+                    }
+                }, 100);
+            }
+            
+            // Düzenleme modundaki değişiklikleri kaydet
+            function savePolygonEditChanges(polygonId) {
+                const polygonObj = window.polygons.find(p => p.data.polygonId === polygonId);
+                if (!polygonObj || !polygonObj.isActive) return;
+                
+                if (polygonObj.points.length < 3) {
+                    alert('En az 3 nokta gerekli!');
+                    return;
+                }
+                
+                // React Native'e güncellenen polygon bilgilerini gönder
+                if (window.ReactNativeWebView) {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                        type: 'updatePolygon',
+                        polygonId: polygonId,
+                        points: polygonObj.points,
+                        polygonData: polygonObj.data
+                    }));
+                }
+                
+                // Düzenleme modunu kapat
+                cancelPolygonEdit(polygonId);
+                
+                console.log('💾 Polygon değişiklikleri kaydediliyor:', polygonObj.data.polygonName);
+            }
+            
+            // Düzenleme modunu iptal et (değişiklikleri kaydetmeden)
+            function cancelPolygonEdit(polygonId) {
+                // Çizim modunu kapat
+                window.isDrawingMode = false;
+                window.editingPolygonId = null;
+                window.editingPoints = [];
+                
+                // UI'yi normal moda al
+                const drawBtn = document.getElementById('drawPolygonBtn');
+                const saveBtn = document.getElementById('savePolygonBtn');
+                const infoPanel = document.getElementById('drawingInfoPanel');
+                const extraControls = document.getElementById('extraControls');
+                const undoBtn = document.getElementById('undoBtn');
+                
+                if (drawBtn) {
+                    drawBtn.textContent = 'Alan Çiz';
+                    drawBtn.classList.remove('active');
+                }
+                if (saveBtn) saveBtn.style.display = 'none';
+                if (infoPanel) infoPanel.style.display = 'none';
+                if (extraControls) extraControls.style.display = 'none';
+                if (undoBtn) undoBtn.style.display = 'none';
+                
+                map.getContainer().style.cursor = '';
+                
+                // Tıklama olayını değiştir
+                map.off('click', onEditMapClick);
+                map.doubleClickZoom.enable();
+                
+                // Edit polygon'u kaldır
+                if (window.editPolygon) {
+                    map.removeLayer(window.editPolygon);
+                    window.editPolygon = null;
+                }
+                
+                // Polygon'u pasif moda döndür
+                deactivatePolygonEdit(polygonId);
+                
+                // Info panel güncelle
+                updateInfoPanel();
+                
+                console.log('❌ Polygon düzenleme modu iptal edildi');
             }
             
             // Başlangıç bilgi paneli güncelleme
@@ -2110,6 +2514,16 @@ const HomeScreen = () => {
                     duration: 2.0 // 2 saniye animasyon
                 });
             };
+
+            // Polygon düzenleme fonksiyonlarını window objesine ata
+            window.activatePolygonEdit = activatePolygonEdit;
+            window.deactivatePolygonEdit = deactivatePolygonEdit;
+            window.deactivateAllPolygons = deactivateAllPolygons;
+            window.savePolygonChanges = savePolygonChanges;
+            window.toggleDrawingMode = toggleDrawingMode;
+            window.cancelPolygonEdit = cancelPolygonEdit;
+            
+            console.log('🔧 Polygon düzenleme fonksiyonları window objesine atandı');
         </script>
     </body>
     </html>
@@ -2243,7 +2657,18 @@ const HomeScreen = () => {
   const handleWebViewMessage = (event) => {
     try {
       const messageData = event.nativeEvent.data;
-      // console.log('WebView mesajı alındı:', messageData);
+      console.log('📨 WebView mesajı alındı:', messageData);
+      
+      // Test mesajını özel olarak handle et
+      if (messageData === 'TEST_MESSAGE_FROM_WEBVIEW') {
+        console.log('✅ WebView TEST mesajı alındı! JavaScript çalışıyor.');
+        return;
+      }
+      
+      if (messageData === 'WEBVIEW_LOADED_TEST') {
+        console.log('✅ WebView yüklendi ve iletişim çalışıyor!');
+        return;
+      }
       
       // DeviceClick mesajı değilse return et
       if (typeof messageData === 'string') {
@@ -2316,7 +2741,24 @@ const HomeScreen = () => {
         // Polygon kaydetme
         if (message.points && message.points.length >= 3) {
           setCurrentDrawingPoints(message.points);
+          setIsEditMode(false);
+          setEditingPolygon(null);
+          setNewPolygonName('');
           setPolygonModalVisible(true);
+        }
+      } else if (message.type === 'editPolygon') {
+        // Polygon düzenleme moduna geç
+        if (message.polygonData && message.points) {
+          setCurrentDrawingPoints(message.points);
+          setIsEditMode(true);
+          setEditingPolygon(message.polygonData);
+          setNewPolygonName(message.polygonData.polygonName);
+          setPolygonModalVisible(true);
+        }
+      } else if (message.type === 'updatedCoordinates') {
+        // Güncellenmiş koordinatları al (düzenleme modunda)
+        if (message.coordinates) {
+          setCurrentDrawingPoints(message.coordinates);
         }
       } else if (message.type === 'updatePolygon') {
         // Var olan polygon güncelleme
@@ -2327,6 +2769,13 @@ const HomeScreen = () => {
       } else if (message.type === 'drawingModeChanged') {
         // Çizim modu durumu değişti
         setIsDrawingMode(message.isDrawingMode);
+      } else if (message.type === 'editPolygonError') {
+        // Polygon düzenleme hatası
+        console.error('Polygon düzenleme hatası:', message.error);
+        Alert.alert('Düzenleme Hatası', `Alan düzenlenirken hata oluştu: ${message.error || 'Bilinmeyen hata'}`);
+      } else if (message.type === 'debug') {
+        // Debug mesajları
+        console.log('🔧 WebView Debug:', message.message);
       }
     } catch (error) {
       console.error('WebView mesajı işlenirken hata:', error);
@@ -2415,6 +2864,33 @@ const HomeScreen = () => {
 
     try {
       if (isEditMode && editingPolygon) {
+        // Düzenleme modunda WebView'den güncellenmiş koordinatları al
+        if (webViewRef.current) {
+          webViewRef.current.injectJavaScript(`
+            if (window.activeEditCoordinates && window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'updatedCoordinates',
+                polygonId: window.activeEditPolygonId,
+                coordinates: window.activeEditCoordinates
+              }));
+            }
+          `);
+          
+          // Koordinat güncellemesini bekle
+          await new Promise((resolve) => {
+            const originalHandler = this.handleWebViewMessage;
+            this.handleWebViewMessage = (event) => {
+              const message = JSON.parse(event.nativeEvent.data);
+              if (message.type === 'updatedCoordinates') {
+                setCurrentDrawingPoints(message.coordinates);
+                this.handleWebViewMessage = originalHandler;
+                resolve();
+              }
+            };
+            setTimeout(resolve, 1000); // 1 saniye timeout
+          });
+        }
+        
         // Düzenleme modu - mevcut polygon'u güncelle
         console.log('🔄 Polygon güncelleniyor...', {
           polygonId: editingPolygon.polygonId,
@@ -2503,30 +2979,86 @@ const HomeScreen = () => {
         }
 
         Alert.alert('Başarılı', `"${newPolygonName}" adlı güvenli alan oluşturuldu`);
+        
+        // State'leri temizle
+        setPolygonModalVisible(false);
+        setNewPolygonName('');
+        setCurrentDrawingPoints([]);
+        setIsDrawingMode(false);
+        setIsEditMode(false);
+        setEditingPolygon(null);
+        
+        // Polygon verilerini yeniden yükle
+        await loadPolygonData(userId, userRole);
+        
+        // Yeni alanı haritaya pasif olarak ekle
+        if (webViewRef.current) {
+          const addPassivePolygonCommand = `
+            try {
+              const points = ${JSON.stringify(currentDrawingPoints)};
+              const polygonData = ${JSON.stringify(newPolygon)};
+              
+              if (points.length >= 3) {
+                // Pasif polygon oluştur (açık renkli)
+                const leafletPolygon = L.polygon(points, {
+                  color: '#e67e22',
+                  fillColor: '#f39c12',
+                  fillOpacity: 0.2,
+                  weight: 2,
+                  className: 'passive-polygon'
+                }).addTo(window.map);
+                
+                // Popup ekle
+                leafletPolygon.bindPopup(
+                  '<div class="polygon-popup">' +
+                  '<div class="polygon-title">🔒 ' + polygonData.polygonName + '</div>' +
+                  '<div class="polygon-info"><strong>Oluşturma:</strong> ' + new Date(polygonData.polygonCreatedTime).toLocaleDateString('tr-TR') + '</div>' +
+                  '<div class="polygon-info"><strong>Nokta Sayısı:</strong> ' + points.length + '</div>' +
+                  '<div class="polygon-info"><strong>Durum:</strong> <span style="color: #95a5a6;">Pasif Görünüm</span></div>' +
+                  '<div style="font-size: 11px; color: #7f8c8d; margin-top: 8px; text-align: center;">💡 Düzenlemek için sağdaki alan ikonuna tıklayın</div>' +
+                  '</div>'
+                );
+                
+                // Double click ile aktif düzenleme moduna geç
+                leafletPolygon.on('dblclick', function() {
+                  activatePolygonEdit(polygonData.polygonId);
+                });
+                
+                // Global polygon listesine ekle
+                window.polygons.push({
+                  leafletPolygon: leafletPolygon,
+                  data: polygonData,
+                  points: points,
+                  isActive: false
+                });
+                
+                console.log('✅ Yeni alan haritaya eklendi (pasif mod):', polygonData.polygonName);
+              }
+            } catch (error) {
+              console.error('Yeni polygon ekleme hatası:', error);
+            }
+          `;
+          
+          webViewRef.current.injectJavaScript(addPassivePolygonCommand);
+        }
       }
-      
-      // State'leri temizle
-      setPolygonModalVisible(false);
-      setNewPolygonName('');
-      setCurrentDrawingPoints([]);
-      setIsDrawingMode(false);
-      setIsEditMode(false);
-      setEditingPolygon(null);
-      
-      // Polygon verilerini yeniden yükle
-      await loadPolygonData(userId, userRole);
-      
-      // Haritayı yeniden oluştur
-      const html = generateMapHTML(location.latitude, location.longitude, devices, deviceSensors, animals, userId, userRole);
-      setMapHTML(html);
 
-      // Edit polygon'u kaldır
+      // Edit polygon'u kaldır ve çizim modunu temizle
       if (webViewRef.current) {
         webViewRef.current.injectJavaScript(`
+          // Drawing polygon'u temizle
+          if (window.drawingPolygon) {
+            window.map.removeLayer(window.drawingPolygon);
+            window.drawingPolygon = null;
+          }
+          
+          // Edit polygon'u temizle
           if (window.editPolygon) {
             window.map.removeLayer(window.editPolygon);
             window.editPolygon = null;
           }
+          
+          // Çizim modunu kapat
           if (window.isDrawing) {
             window.isDrawing = false;
             const drawBtn = document.getElementById('drawPolygonBtn');
@@ -2534,6 +3066,18 @@ const HomeScreen = () => {
             if (drawBtn) drawBtn.style.display = 'block';
             if (saveBtn) saveBtn.style.display = 'none';
           }
+          
+          // Geçici noktaları temizle
+          if (window.tempPoints && window.tempPoints.length > 0) {
+            window.tempPoints.forEach(point => {
+              if (point && window.map.hasLayer(point)) {
+                window.map.removeLayer(point);
+              }
+            });
+            window.tempPoints = [];
+          }
+          
+          console.log('🧹 Çizim modu temizlendi');
         `);
       }
 
@@ -2571,6 +3115,53 @@ const HomeScreen = () => {
                 await deletePolygon(editingPolygon.polygonId);
                 console.log('✅ Polygon silindi');
 
+                // Önce silinen polygon'u haritadan kaldır (anında görsel güncellenme için)
+                if (webViewRef.current) {
+                  webViewRef.current.injectJavaScript(`
+                    try {
+                      const polygonIdToRemove = ${editingPolygon.polygonId};
+                      console.log('🗑️ Haritadan polygon kaldırılıyor:', polygonIdToRemove);
+                      
+                      // Silinen polygon'u haritadan kaldır
+                      if (window.polygons) {
+                        const polygonIndex = window.polygons.findIndex(p => p.data && p.data.polygonId === polygonIdToRemove);
+                        if (polygonIndex !== -1) {
+                          const polygonToRemove = window.polygons[polygonIndex];
+                          
+                          // Polygon'u haritadan kaldır
+                          if (polygonToRemove.leafletPolygon && window.map.hasLayer(polygonToRemove.leafletPolygon)) {
+                            window.map.removeLayer(polygonToRemove.leafletPolygon);
+                          }
+                          
+                          // Editable noktaları da kaldır (eğer varsa)
+                          if (polygonToRemove.editablePoints) {
+                            polygonToRemove.editablePoints.forEach(point => {
+                              if (window.map.hasLayer(point)) {
+                                window.map.removeLayer(point);
+                              }
+                            });
+                          }
+                          
+                          // Array'den kaldır
+                          window.polygons.splice(polygonIndex, 1);
+                          console.log('✅ Polygon haritadan kaldırıldı:', polygonIdToRemove);
+                        } else {
+                          console.log('⚠️ Silinecek polygon haritada bulunamadı:', polygonIdToRemove);
+                        }
+                      }
+                      
+                      // Edit polygon'u kaldır
+                      if (window.editPolygon) {
+                        window.map.removeLayer(window.editPolygon);
+                        window.editPolygon = null;
+                      }
+                      
+                    } catch (error) {
+                      console.error('Polygon haritadan kaldırılırken hata:', error);
+                    }
+                  `);
+                }
+
                 Alert.alert('Başarılı', `"${editingPolygon.polygonName}" adlı güvenli alan silindi`);
 
                 // State'leri temizle
@@ -2581,41 +3172,11 @@ const HomeScreen = () => {
                 setEditingPolygon(null);
 
                 // Polygon verilerini yeniden yükle
-                await loadPolygonData(userId, userRole);
+                const freshData = await loadPolygonData(userId, userRole);
 
-                // Haritayı yeniden oluştur
-                const html = generateMapHTML(location.latitude, location.longitude, devices, deviceSensors, animals, userId, userRole);
+                // Haritayı yeniden oluştur (bu otomatik olarak polygon'u haritadan kaldırır)
+                const html = generateMapHTML(location.latitude, location.longitude, devices, deviceSensors, animals, userId, userRole, freshData.polygons, freshData.polygonPoints);
                 setMapHTML(html);
-
-                // Edit polygon'u kaldır ve haritadan silinen polygon'u da kaldır
-                if (webViewRef.current) {
-                  webViewRef.current.injectJavaScript(`
-                    try {
-                      // Edit polygon'u kaldır
-                      if (window.editPolygon) {
-                        window.map.removeLayer(window.editPolygon);
-                        window.editPolygon = null;
-                      }
-                      
-                      // Silinen polygon'u haritadan kaldır
-                      if (window.polygons) {
-                        window.polygons = window.polygons.filter(polygon => {
-                          if (polygon.data.polygonId === ${editingPolygon.polygonId}) {
-                            // Bu polygon'u haritadan kaldır
-                            if (polygon.leafletPolygon && window.map.hasLayer(polygon.leafletPolygon)) {
-                              window.map.removeLayer(polygon.leafletPolygon);
-                            }
-                            return false; // Array'den kaldır
-                          }
-                          return true; // Array'de tut
-                        });
-                        console.log('🗑️ Polygon haritadan kaldırıldı: ${editingPolygon.polygonId}');
-                      }
-                    } catch (error) {
-                      console.error('Polygon haritadan kaldırılırken hata:', error);
-                    }
-                  `);
-                }
 
               } catch (error) {
                 console.error('❌ Polygon silinirken hata:', error);
@@ -2643,20 +3204,100 @@ const HomeScreen = () => {
             style: 'destructive',
             onPress: async () => {
               try {
+                console.log('🗑️ Tüm polygonlar siliniyor...');
+                
                 // Kullanıcının polygonlarını sil
                 const userPolygons = userRole === 'admin' ? polygons : polygons.filter(p => p.userId === userId);
                 
                 for (const polygon of userPolygons) {
+                  console.log(`🗑️ Polygon siliniyor: ${polygon.polygonName} (ID: ${polygon.polygonId})`);
+                  
+                  // Önce polygon noktalarını sil
+                  const polygonPoints = await getPolygonPointsByPolygonId(polygon.polygonId);
+                  for (const point of polygonPoints) {
+                    await deletePolygonPoint(point.polygonPointId);
+                  }
+                  console.log(`✅ Polygon noktaları silindi: ${polygon.polygonName}`);
+                  
+                  // Sonra polygon'u sil
                   await deletePolygon(polygon.polygonId);
+                  console.log(`✅ Polygon silindi: ${polygon.polygonName}`);
+                }
+                
+                console.log('✅ Tüm polygonlar başarıyla silindi');
+                
+                // Önce haritadan tüm polygonları kaldır (anında görsel güncellenme için)
+                if (webViewRef.current) {
+                  webViewRef.current.injectJavaScript(`
+                    try {
+                      console.log('🧹 Haritadan tüm polygonlar kaldırılıyor...');
+                      
+                      // Tüm polygonları haritadan kaldır
+                      if (window.polygons && window.polygons.length > 0) {
+                        window.polygons.forEach((polygon, index) => {
+                          try {
+                            if (polygon.leafletPolygon && window.map.hasLayer(polygon.leafletPolygon)) {
+                              window.map.removeLayer(polygon.leafletPolygon);
+                              console.log('🗑️ Polygon kaldırıldı: ' + (polygon.data ? polygon.data.polygonName : 'index ' + index));
+                            }
+                            
+                            // Editable noktaları da kaldır (eğer varsa)
+                            if (polygon.editablePoints) {
+                              polygon.editablePoints.forEach(point => {
+                                if (window.map.hasLayer(point)) {
+                                  window.map.removeLayer(point);
+                                }
+                              });
+                            }
+                          } catch (err) {
+                            console.error('Polygon kaldırılırken hata:', err);
+                          }
+                        });
+                        
+                        // Polygon listesini temizle
+                        window.polygons = [];
+                        console.log('✅ Tüm polygonlar haritadan kaldırıldı');
+                      }
+                      
+                      // Aktif edit polygon'u da kaldır
+                      if (window.editPolygon) {
+                        window.map.removeLayer(window.editPolygon);
+                        window.editPolygon = null;
+                      }
+                      
+                      // Drawing polygon'u da kaldır
+                      if (window.drawingPolygon) {
+                        window.map.removeLayer(window.drawingPolygon);
+                        window.drawingPolygon = null;
+                      }
+                      
+                      // Geçici noktaları temizle
+                      if (window.tempPoints && window.tempPoints.length > 0) {
+                        window.tempPoints.forEach(point => {
+                          if (point && window.map.hasLayer(point)) {
+                            window.map.removeLayer(point);
+                          }
+                        });
+                        window.tempPoints = [];
+                      }
+                      
+                    } catch (error) {
+                      console.error('❌ Polygonları haritadan kaldırırken hata:', error);
+                    }
+                  `);
                 }
                 
                 Alert.alert('Başarılı', 'Tüm güvenli alanlar silindi');
                 
                 // Polygon verilerini yeniden yükle
-                await loadPolygonData(userId, userRole);
+                const freshData = await loadPolygonData(userId, userRole);
                 
-                // Haritayı yeniden oluştur
-                const html = generateMapHTML(location.latitude, location.longitude, devices, deviceSensors, animals, userId, userRole);
+                // Debug: Yüklenen polygon sayısını kontrol et
+                console.log('🔍 Temizleme sonrası fresh polygon sayısı:', freshData.polygons.length);
+                console.log('🔍 Fresh polygon noktaları sayısı:', freshData.polygonPoints.length);
+                
+                // Haritayı yeniden oluştur - fresh data ile
+                const html = generateMapHTML(location.latitude, location.longitude, devices, deviceSensors, animals, userId, userRole, freshData.polygons, freshData.polygonPoints);
                 setMapHTML(html);
                 
               } catch (error) {
@@ -2676,57 +3317,79 @@ const HomeScreen = () => {
   const handlePolygonEdit = async (polygon) => {
     try {
       console.log('🔧 Polygon düzenleme başlatılıyor:', polygon);
+      console.log('🔧 WebView ref durumu:', !!webViewRef.current);
       
-      // Polygon noktalarını al
-      const polygonPoints = await getPolygonPointsByPolygonId(polygon.polygonId);
-      console.log('📍 Polygon noktaları:', polygonPoints);
-      
-      // Polygon noktalarını coordinate formatına çevir
-      const coordinates = polygonPoints.map(point => [
-        point.polygonPointLatitude,
-        point.polygonPointLongitude
-      ]);
-      
-      // State'leri düzenleme moduna ayarla
-      setEditingPolygon(polygon);
-      setIsEditMode(true);
-      setNewPolygonName(polygon.polygonName);
-      setCurrentDrawingPoints(coordinates);
-      setPolygonModalVisible(true);
-      
-      // Haritada polygon'u highlight yap
+      // Haritada polygon'u aktif düzenleme moduna geçir
       if (webViewRef.current) {
-        webViewRef.current.injectJavaScript(`
-          // Düzenleme modu için polygon'u vurgula
-          if (window.map) {
-            const coordinates = ${JSON.stringify(coordinates)};
-            
-            // Mevcut edit polygon'u varsa kaldır
-            if (window.editPolygon) {
-              window.map.removeLayer(window.editPolygon);
-            }
-            
-            // Yeni edit polygon'u ekle
-            window.editPolygon = L.polygon(coordinates, {
-              color: '#ff6b00',
-              fillColor: '#ff6b00',
-              fillOpacity: 0.3,
-              weight: 3,
-              dashArray: '10, 5'
-            }).addTo(window.map);
-            
-            // Polygon'a zoom yap
-            window.map.fitBounds(window.editPolygon.getBounds(), {
-              padding: [20, 20],
-              maxZoom: 15
-            });
+        const polygonId = polygon.polygonId;
+        console.log('📤 WebView\'e gönderilecek ID:', polygonId);
+        
+        const activateEditCommand = `
+          console.log('🎯 TEST: JavaScript injection başladı');
+          
+          // Basit test mesajı gönder
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage('TEST_MESSAGE_FROM_WEBVIEW');
+            console.log('📤 Test mesajı gönderildi');
+          } else {
+            console.log('❌ ReactNativeWebView bulunamadı');
           }
-        `);
+          
+          // Gerçek kod...
+          (function() {
+            try {
+              console.log('🎯 JavaScript injection başladı');
+              console.log('🔧 Aranan polygonId:', '${polygonId}');
+              console.log('🔧 window.polygons var mı:', !!window.polygons);
+              console.log('🔧 window.polygons uzunluğu:', window.polygons ? window.polygons.length : 0);
+              
+              if (window.polygons) {
+                console.log('🔍 Mevcut polygon ID\'leri:', window.polygons.map(p => p.data.polygonId));
+              }
+              
+              // React Native'e debug mesajı gönder
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'debug',
+                  message: 'JavaScript injection başarılı - aranan ID: ${polygonId}'
+                }));
+              }
+              
+              if (typeof window.activatePolygonEdit === 'function') {
+                console.log('✅ activatePolygonEdit fonksiyonu bulundu, çağrılıyor...');
+                window.activatePolygonEdit('${polygonId}');
+              } else {
+                console.error('❌ window.activatePolygonEdit fonksiyonu bulunamadı!');
+                if (window.ReactNativeWebView) {
+                  window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'debug',
+                    message: 'activatePolygonEdit fonksiyonu bulunamadı!'
+                  }));
+                }
+              }
+              
+            } catch (error) {
+              console.error('❌ JavaScript injection hatası:', error);
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'debug',
+                  message: 'JavaScript hatası: ' + error.message
+                }));
+              }
+            }
+          })();
+          true;
+        `;
+        
+        console.log('📤 JavaScript injection gönderiliyor...');
+        webViewRef.current.injectJavaScript(activateEditCommand);
+      } else {
+        console.error('❌ WebView ref bulunamadı!');
       }
-      
+
     } catch (error) {
       console.error('❌ Polygon düzenleme hatası:', error);
-      Alert.alert('Hata', 'Polygon düzenlenemedi: ' + (error.message || 'Bilinmeyen hata'));
+      Alert.alert('Hata', 'Alan düzenleme modu başlatılamadı: ' + (error.message || 'Bilinmeyen hata'));
     }
   };
 
@@ -2985,6 +3648,21 @@ const HomeScreen = () => {
               onLoadEnd={() => {
                 setMapReady(true);
                 console.log('🗺️ Harita yüklendi, gerçek zamanlı güncellemeler başlatılıyor...');
+                
+                // WebView yüklendiğinde test mesajı gönder
+                setTimeout(() => {
+                  if (webViewRef.current) {
+                    console.log('📤 WebView test mesajı gönderiliyor...');
+                    webViewRef.current.injectJavaScript(`
+                      console.log('🧪 WebView test injection çalışıyor!');
+                      if (window.ReactNativeWebView) {
+                        window.ReactNativeWebView.postMessage('WEBVIEW_LOADED_TEST');
+                      }
+                      true;
+                    `);
+                  }
+                }, 500);
+                
                 // Harita yüklendikten sonra gerçek zamanlı güncellemeleri başlat
                 setTimeout(() => {
                   startRealTimeUpdates();
@@ -3433,14 +4111,70 @@ const HomeScreen = () => {
                   style={styles.polygonCancelButton}
                   onPress={() => {
                     setPolygonModalVisible(false);
+                    setNewPolygonName('');
+                    setCurrentDrawingPoints([]);
                     setIsEditMode(false);
                     setEditingPolygon(null);
-                    // Edit polygon'u kaldır
+                    
+                    // Aktif düzenleme modunu kapat ve polygon'u pasif hale getir
                     if (webViewRef.current) {
                       webViewRef.current.injectJavaScript(`
-                        if (window.editPolygon) {
-                          window.map.removeLayer(window.editPolygon);
-                          window.editPolygon = null;
+                        try {
+                          // Eğer aktif düzenleme varsa, polygon'u pasif duruma döndür
+                          if (window.activeEditPolygonId && window.polygons) {
+                            const polygonIndex = window.polygons.findIndex(p => p.data.polygonId === window.activeEditPolygonId);
+                            if (polygonIndex !== -1) {
+                              const polygonObj = window.polygons[polygonIndex];
+                              
+                              // Aktif düzenleme elemanlarını kaldır
+                              if (polygonObj.leafletPolygon && window.map.hasLayer(polygonObj.leafletPolygon)) {
+                                window.map.removeLayer(polygonObj.leafletPolygon);
+                              }
+                              
+                              if (polygonObj.editablePoints) {
+                                polygonObj.editablePoints.forEach(point => {
+                                  if (window.map.hasLayer(point)) {
+                                    window.map.removeLayer(point);
+                                  }
+                                });
+                                delete polygonObj.editablePoints;
+                              }
+                              
+                              // Pasif polygon'u tekrar ekle
+                              const passivePolygon = L.polygon(polygonObj.points, {
+                                color: '#e67e22',
+                                fillColor: '#f39c12',
+                                fillOpacity: 0.2,
+                                weight: 2,
+                                className: 'passive-polygon'
+                              }).addTo(window.map);
+                              
+                              passivePolygon.bindPopup(
+                                '<div class="polygon-popup">' +
+                                '<div class="polygon-title">🔒 ' + polygonObj.data.polygonName + '</div>' +
+                                '<div class="polygon-info"><strong>Oluşturma:</strong> ' + new Date(polygonObj.data.polygonCreatedTime).toLocaleDateString('tr-TR') + '</div>' +
+                                '<div class="polygon-info"><strong>Nokta Sayısı:</strong> ' + polygonObj.points.length + '</div>' +
+                                '<div class="polygon-info"><strong>Durum:</strong> <span style="color: #95a5a6;">Pasif Görünüm</span></div>' +
+                                '</div>'
+                              );
+                              
+                              polygonObj.leafletPolygon = passivePolygon;
+                              polygonObj.isActive = false;
+                            }
+                          }
+                          
+                          // Global değişkenleri temizle
+                          if (window.activeEditCoordinates) {
+                            delete window.activeEditCoordinates;
+                          }
+                          if (window.activeEditPolygonId) {
+                            delete window.activeEditPolygonId;
+                          }
+                          
+                          console.log('✅ Aktif düzenleme modu iptal edildi, polygon pasif duruma döndü');
+                          
+                        } catch (error) {
+                          console.error('Düzenleme modu iptal hatası:', error);
                         }
                       `);
                     }
