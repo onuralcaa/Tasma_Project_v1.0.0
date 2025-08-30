@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,9 +13,11 @@ import {
   TextInput,
   KeyboardAvoidingView,
   ScrollView,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
+import { CameraView, Camera } from 'expo-camera';
 import { getAllDevices, addDevice, deleteDevice, updateDevice } from '../api/device';
 import { getAllAnimals } from '../api/animal';
 import { getUserIdFromToken, isTokenValid, getUserRoleFromToken } from '../utils/storage';
@@ -42,9 +44,72 @@ const DeviceListScreen = ({ navigation }) => {
   const [selectedAnimalId, setSelectedAnimalId] = useState('');
   const [isMacValid, setIsMacValid] = useState(true);
 
+  // QR kod okuyucu için state'ler
+  const [showQRScanner, setShowQRScanner] = useState(false);
+  const [hasPermission, setHasPermission] = useState(null);
+  const [scanned, setScanned] = useState(false);
+  const [scanSuccess, setScanSuccess] = useState(false);
+
+  // Debug için showQRScanner değişimlerini takip et
+  useEffect(() => {
+    console.log('showQRScanner changed to:', showQRScanner);
+  }, [showQRScanner]);
+
+  // Animasyon referansları
+  const scanLineAnimation = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
     initializeScreen();
   }, []);
+
+  // Kamera izni kontrolü
+  useEffect(() => {
+    const getCameraPermissions = async () => {
+      console.log('Kamera izni kontrol ediliyor...');
+      const { status } = await Camera.requestCameraPermissionsAsync();
+      console.log('Kamera izni durumu:', status);
+      setHasPermission(status === 'granted');
+    };
+
+    getCameraPermissions();
+  }, []);
+
+  // Scan line animasyonu
+  useEffect(() => {
+    if (showQRScanner && !scanSuccess) {
+      const startAnimation = () => {
+        Animated.sequence([
+          Animated.timing(scanLineAnimation, {
+            toValue: 1,
+            duration: 2000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(scanLineAnimation, {
+            toValue: 0,
+            duration: 2000,
+            useNativeDriver: true,
+          }),
+        ]).start(() => {
+          if (showQRScanner && !scanSuccess) {
+            startAnimation();
+          }
+        });
+      };
+      startAnimation();
+    } else {
+      // Animasyonu sıfırla
+      scanLineAnimation.setValue(0);
+    }
+  }, [showQRScanner, scanSuccess]);
+
+  // QR Scanner kapatıldığında temizlik yap
+  useEffect(() => {
+    if (!showQRScanner) {
+      setScanned(false);
+      setScanSuccess(false);
+      scanLineAnimation.setValue(0);
+    }
+  }, [showQRScanner]);
 
   // Sayfa focus olduğunda cihazları ve hayvanları yenile
   useEffect(() => {
@@ -318,6 +383,93 @@ const DeviceListScreen = ({ navigation }) => {
     }
   };
 
+  // QR kod okuyucu açma fonksiyonu
+  const openQRScanner = async () => {
+    console.log('QR Scanner açılıyor...');
+    console.log('Kamera izni durumu:', hasPermission);
+    
+    if (hasPermission === null) {
+      console.log('Kamera izni null - izin isteniyor');
+      Alert.alert('İzin Bekleniyor', 'Kamera izni kontrol ediliyor...');
+      return;
+    }
+    if (hasPermission === false) {
+      console.log('Kamera izni yok - kullanıcıya uyarı');
+      Alert.alert('İzin Gerekli', 'QR kod okuyabilmek için kamera iznine ihtiyaç var.');
+      return;
+    }
+    
+    console.log('QR Scanner state\'leri sıfırlanıyor');
+    setScanned(false);
+    setScanSuccess(false);
+    console.log('QR Scanner modal açılıyor');
+    setShowQRScanner(true);
+  };
+
+  // QR Scanner kapatma fonksiyonu
+  const closeQRScanner = () => {
+    console.log('QR Scanner kapatılıyor - kamera durdurulacak');
+    setShowQRScanner(false);
+    setScanSuccess(false);
+    setScanned(false);
+    // Animasyonu da durdur
+    scanLineAnimation.setValue(0);
+  };
+
+  // QR kod okuma işlemi
+  const handleBarcodeScanned = ({ type, data }) => {
+    setScanned(true);
+    setScanSuccess(true);
+    
+    // QR koddan gelen veriyi MAC adresi formatına çevirmeye çalış
+    let scannedData = data.trim().toUpperCase();
+    
+    // Farklı QR kod formatlarını destekle
+    let macAddress = '';
+    
+    if (scannedData.includes(':')) {
+      // Zaten : ile ayrılmış format
+      macAddress = scannedData;
+    } else if (scannedData.includes('-')) {
+      // - ile ayrılmış formatı : formatına çevir
+      macAddress = scannedData.replace(/-/g, ':');
+    } else if (scannedData.length === 12) {
+      // Sadece hexadecimal karakterler, : ekle
+      macAddress = scannedData.match(/.{2}/g).join(':');
+    } else {
+      // Diğer durumlar için direkt kullan
+      macAddress = scannedData;
+    }
+    
+    // Format kontrolü ve düzenleme
+    if (macAddress.length >= 12) {
+      const formattedMac = formatMacAddress(macAddress);
+      setDeviceMacAddress(formattedMac);
+      
+      // Validasyon kontrolü
+      if (validateMacAddress(formattedMac)) {
+        setIsMacValid(true);
+        
+        // 2 saniye sonra kamerayı kapat ve başarı mesajı göster
+        setTimeout(() => {
+          closeQRScanner();
+          Alert.alert('✅ Başarılı', `QR kod başarıyla okundu!\n\nMAC Adresi: ${formattedMac}`);
+        }, 2000);
+      } else {
+        setIsMacValid(false);
+        setTimeout(() => {
+          closeQRScanner();
+          Alert.alert('⚠️ Uyarı', `QR kod okundu ancak MAC format kontrolü başarısız.\n\nOkunan: ${formattedMac}`);
+        }, 2000);
+      }
+    } else {
+      setTimeout(() => {
+        closeQRScanner();
+        Alert.alert('❌ Hata', `QR koddan okunan veri MAC adresi formatında değil.\n\nOkunan: ${data}`);
+      }, 2000);
+    }
+  };
+
   const handleSaveDevice = async () => {
     if (!deviceName.trim()) {
       Alert.alert('Hata', 'Lütfen cihaz adını girin.');
@@ -370,6 +522,7 @@ const DeviceListScreen = ({ navigation }) => {
       }
       
       resetForm();
+      closeQRScanner(); // QR Scanner'ı da kapat
       setModalVisible(false);
       
       // Listeyi yenile
@@ -430,7 +583,7 @@ const DeviceListScreen = ({ navigation }) => {
         onPress={() => handleDevicePress(item)}
       >
         <View style={styles.deviceInfo}>
-          <Ionicons name="hardware-chip" size={24} color="#3498db" />
+          <Ionicons name="hardware-chip" size={24} color="#27ae60" />
           <View style={styles.deviceDetails}>
             <Text style={styles.deviceName}>{item.deviceName}</Text>
             <Text style={styles.deviceMac}>MAC: {item.deviceMacAdress}</Text>
@@ -444,7 +597,7 @@ const DeviceListScreen = ({ navigation }) => {
 
   const renderEmptyList = () => (
     <View style={styles.emptyContainer}>
-      <Ionicons name="hardware-chip-outline" size={80} color="#bdc3c7" />
+      <Ionicons name="hardware-chip-outline" size={80} color="#27ae60" />
       <Text style={styles.emptyTitle}>Henüz cihaz eklemediniz</Text>
       <Text style={styles.emptySubtitle}>
         Yeni cihaz eklemek için sağ üstteki + butonuna basın.
@@ -570,7 +723,10 @@ const DeviceListScreen = ({ navigation }) => {
         animationType="slide"
         transparent={true}
         visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
+        onRequestClose={() => {
+          closeQRScanner();
+          setModalVisible(false);
+        }}
       >
         <View style={styles.modalOverlay}>
           <KeyboardAvoidingView 
@@ -583,7 +739,10 @@ const DeviceListScreen = ({ navigation }) => {
                   {editMode ? 'Cihaz Düzenle' : 'Yeni Cihaz Ekle'}
                 </Text>
                 <TouchableOpacity 
-                  onPress={() => setModalVisible(false)}
+                  onPress={() => {
+                    closeQRScanner();
+                    setModalVisible(false);
+                  }}
                   style={styles.closeButton}
                 >
                   <Ionicons name="close" size={24} color="#7f8c8d" />
@@ -600,18 +759,29 @@ const DeviceListScreen = ({ navigation }) => {
                 />
 
                 <Text style={styles.inputLabel}>MAC Adresi</Text>
-                <TextInput
-                  style={[
-                    styles.input, 
-                    !isMacValid && { borderColor: '#e74c3c', borderWidth: 2 }
-                  ]}
-                  placeholder="MAC adresini girin (örn: FE:4E:11:00:00:01)"
-                  value={deviceMacAddress}
-                  onChangeText={handleMacAddressChange}
-                  autoCapitalize="characters"
-                  maxLength={17}
-                  keyboardType="default"
-                />
+                <View style={styles.macInputContainer}>
+                  <TextInput
+                    style={[
+                      styles.macInput, 
+                      !isMacValid && { borderColor: '#e74c3c', borderWidth: 2 }
+                    ]}
+                    placeholder="MAC adresini girin (örn: FE:4E:11:00:00:01)"
+                    value={deviceMacAddress}
+                    onChangeText={handleMacAddressChange}
+                    autoCapitalize="characters"
+                    maxLength={17}
+                    keyboardType="default"
+                  />
+                  <TouchableOpacity 
+                    style={styles.qrButton}
+                    onPress={() => {
+                      console.log('QR Button pressed!');
+                      openQRScanner();
+                    }}
+                  >
+                    <Ionicons name="qr-code" size={24} color="#fff" />
+                  </TouchableOpacity>
+                </View>
                 {!isMacValid && deviceMacAddress.length > 0 && (
                   <Text style={styles.errorText}>
                     ⚠️ Geçersiz MAC adresi formatı (12 hexadecimal karakter gerekli)
@@ -660,6 +830,7 @@ const DeviceListScreen = ({ navigation }) => {
                   <TouchableOpacity 
                     style={styles.cancelButton}
                     onPress={() => {
+                      closeQRScanner();
                       setModalVisible(false);
                       resetForm();
                     }}
@@ -685,6 +856,122 @@ const DeviceListScreen = ({ navigation }) => {
             </View>
           </KeyboardAvoidingView>
         </View>
+
+        {/* QR Code Scanner Modal - Sadece cihaz ekleme modalı açıkken */}
+        {showQRScanner && modalVisible && (
+          <Modal
+            animationType="slide"
+            transparent={false}
+            visible={true}
+            onRequestClose={closeQRScanner}
+          >
+            <View style={styles.qrScannerContainer}>
+              {console.log('QR Scanner modal render ediliyor, hasPermission:', hasPermission)}
+              
+              {hasPermission ? (
+                <>
+                  <CameraView
+                    style={StyleSheet.absoluteFillObject}
+                    facing="back"
+                    onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
+                    barcodeScannerSettings={{
+                      barcodeTypes: ["qr", "pdf417", "datamatrix", "ean13", "code128"],
+                    }}
+                  />
+                  
+                  {/* Overlay - kameranın üstünde */}
+                  <View style={styles.qrOverlay}>
+                    {/* Üst kısım - başlık ve kapat butonu */}
+                    <View style={styles.qrTopSection}>
+                      <TouchableOpacity 
+                        style={styles.qrCloseButton}
+                        onPress={closeQRScanner}
+                      >
+                        <Ionicons name="close" size={28} color="#FFFFFF" />
+                      </TouchableOpacity>
+                      <Text style={styles.qrTitle}>QR Kod Okuyucu</Text>
+                      <View style={styles.qrPlaceholder} />
+                    </View>
+
+                    {/* Orta kısım - tarama alanı */}
+                    <View style={styles.qrMiddleSection}>
+                      <View style={styles.qrScanArea}>
+                        {/* QR Frame */}
+                        <View style={styles.qrFrame}>
+                          {/* Köşe çizgileri */}
+                          <View style={[styles.qrCorner, styles.qrCornerTopLeft]} />
+                          <View style={[styles.qrCorner, styles.qrCornerTopRight]} />
+                          <View style={[styles.qrCorner, styles.qrCornerBottomLeft]} />
+                          <View style={[styles.qrCorner, styles.qrCornerBottomRight]} />
+                          
+                          {/* Tarama çizgisi animasyonu */}
+                          {!scanSuccess && (
+                            <View style={styles.scanLineContainer}>
+                              <Animated.View 
+                                style={[
+                                  styles.scanLine,
+                                  {
+                                    transform: [
+                                      {
+                                        translateY: scanLineAnimation.interpolate({
+                                          inputRange: [0, 1],
+                                          outputRange: [-120, 120],
+                                        }),
+                                      },
+                                    ],
+                                  },
+                                ]}
+                              />
+                            </View>
+                          )}
+                          
+                          {/* Başarı ikonu */}
+                          {scanSuccess && (
+                            <View style={styles.successOverlay}>
+                              <View style={styles.successIcon}>
+                                <Ionicons name="checkmark-circle" size={80} color="#00C851" />
+                              </View>
+                              <Text style={styles.successText}>QR Kod Okundu!</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    </View>
+
+                    {/* Alt kısım - talimatlar */}
+                    <View style={styles.qrBottomSection}>
+                      <Text style={styles.qrInstruction}>
+                        {scanSuccess 
+                          ? "MAC adresi başarıyla okundu" 
+                          : "MAC adresi içeren QR kodu çerçeve içine yerleştirin"
+                        }
+                      </Text>
+                      
+                      {!scanSuccess && (
+                        <Text style={styles.qrSubInstruction}>
+                          Cihazınızın QR kodunu okutarak MAC adresini otomatik olarak girebilirsiniz
+                        </Text>
+                      )}
+                      
+                      {scanned && !scanSuccess && (
+                        <TouchableOpacity 
+                          style={styles.qrRetryButton}
+                          onPress={() => setScanned(false)}
+                        >
+                          <Text style={styles.qrRetryButtonText}>Tekrar Dene</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                </>
+              ) : (
+                <View style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }]}>
+                  <Text style={{ color: '#fff', fontSize: 18 }}>Kamera izni bekleniyor...</Text>
+                </View>
+              )}
+            </View>
+          </Modal>
+        )}
       </Modal>
     </View>
   );
@@ -993,6 +1280,235 @@ const styles = StyleSheet.create({
     marginTop: 5,
     marginLeft: 5,
     fontStyle: 'italic',
+  },
+  // MAC input ve QR kod buton stilleri
+  macInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  macInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#bdc3c7',
+    borderRadius: 10,
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    fontSize: 16,
+    backgroundColor: '#fff',
+    marginRight: 10,
+  },
+  qrButton: {
+    backgroundColor: '#3498db',
+    borderRadius: 10,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 48,
+    height: 48,
+  },
+  // QR Scanner Modal stilleri
+  qrScannerContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  qrOverlay: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    justifyContent: 'space-between',
+  },
+  qrTopSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  qrTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    flex: 1,
+  },
+  qrCloseButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrPlaceholder: {
+    width: 44,
+  },
+  qrMiddleSection: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 40,
+  },
+  qrScanArea: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrFrame: {
+    width: 280,
+    height: 280,
+    position: 'relative',
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrCorner: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderColor: '#FFFFFF',
+    borderWidth: 4,
+  },
+  qrCornerTopLeft: {
+    top: 0,
+    left: 0,
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+  },
+  qrCornerTopRight: {
+    top: 0,
+    right: 0,
+    borderLeftWidth: 0,
+    borderBottomWidth: 0,
+  },
+  qrCornerBottomLeft: {
+    bottom: 0,
+    left: 0,
+    borderRightWidth: 0,
+    borderTopWidth: 0,
+  },
+  qrCornerBottomRight: {
+    bottom: 0,
+    right: 0,
+    borderLeftWidth: 0,
+    borderTopWidth: 0,
+  },
+  scanLineContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanLine: {
+    width: '80%',
+    height: 2,
+    backgroundColor: '#00C851',
+    shadowColor: '#00C851',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 5,
+    elevation: 5,
+  },
+  successOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,200,81,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+  },
+  successIcon: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  successText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#00C851',
+    textAlign: 'center',
+  },
+  qrBottomSection: {
+    paddingHorizontal: 30,
+    paddingBottom: Platform.OS === 'ios' ? 50 : 30,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  qrInstruction: {
+    fontSize: 18,
+    color: '#FFFFFF',
+    textAlign: 'center',
+    fontWeight: '600',
+    marginBottom: 10,
+    lineHeight: 24,
+  },
+  qrSubInstruction: {
+    fontSize: 14,
+    color: '#CCCCCC',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+    paddingHorizontal: 20,
+  },
+  qrRetryButton: {
+    backgroundColor: '#3498db',
+    paddingVertical: 12,
+    paddingHorizontal: 30,
+    borderRadius: 25,
+    marginTop: 10,
+  },
+  qrRetryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  qrTopRight: {
+    top: 0,
+    right: 0,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+  },
+  qrBottomLeft: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+  },
+  qrBottomRight: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+  },
+  qrScannerFooter: {
+    backgroundColor: '#3498db',
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+  },
+  qrInstructionText: {
+    color: '#fff',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  qrRetryButton: {
+    backgroundColor: '#2ecc71',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  qrRetryButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });
 

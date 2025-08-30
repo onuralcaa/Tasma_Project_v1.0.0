@@ -703,8 +703,16 @@ const HomeScreen = () => {
         });
         
         // Yönlü cihaz ikonu oluşturma fonksiyonu
-        function createDirectionalDeviceIcon(yaw = 0, isOnline = true) {
-          const color = '#e74c3c'; // Kırmızı renk
+        function createDirectionalDeviceIcon(yaw = 0, isOnline = true, isInsidePolygon = true) {
+          // Renk belirleme - Polygon içindeyse yeşil, dışındaysa kırmızı
+          const color = isInsidePolygon ? '#27ae60' : '#e74c3c'; // Yeşil : Kırmızı
+          console.log('🎨 UPDATE - Icon oluşturuluyor:', {
+            yaw: yaw,
+            isOnline: isOnline,
+            isInsidePolygon: isInsidePolygon,
+            color: color,
+            colorName: isInsidePolygon ? 'YEŞİL' : 'KIRMIZI'
+          });
           
           // Yaw değerini normalize et (0-360 arası)
           const normalizedYaw = ((yaw % 360) + 360) % 360;
@@ -746,6 +754,14 @@ const HomeScreen = () => {
                   const updatedIcon = createDirectionalDeviceIcon(deviceYaw, true, isInsidePolygon);
                   marker.setIcon(updatedIcon);
                   
+                  // Cihaz bilgilerini güncelle (önemli!)
+                  window.deviceData[normalizedDeviceId] = {
+                    yaw: deviceYaw,
+                    isOnline: true,
+                    lat: status.lat,
+                    lng: status.lng
+                  };
+                  
                   // Marker'ı haritaya ekle (eğer kaldırılmışsa)
                   if (!window.map.hasLayer(marker)) {
                     marker.addTo(window.map);
@@ -778,11 +794,21 @@ const HomeScreen = () => {
                 if (marker && window.map.hasLayer(marker)) {
                   window.map.removeLayer(marker);
                 }
+                
+                // Çevrimdışı cihaz bilgilerini güncelle
+                if (window.deviceData[normalizedDeviceId]) {
+                  window.deviceData[normalizedDeviceId].isOnline = false;
+                }
               }
             } else {
               // Sensor verisi olmayan cihazları da gizle (çevrimdışı kabul et)
               if (marker && window.map.hasLayer(marker)) {
                 window.map.removeLayer(marker);
+              }
+              
+              // Sensor verisi olmayan cihaz bilgilerini güncelle
+              if (window.deviceData[normalizedDeviceId]) {
+                window.deviceData[normalizedDeviceId].isOnline = false;
               }
             }
           });
@@ -808,6 +834,14 @@ const HomeScreen = () => {
               
               // Yeni marker oluştur
               const newMarker = L.marker([status.lat, status.lng], {icon: triangleIcon}).addTo(window.map);
+              
+              // Cihaz bilgilerini kaydet
+              window.deviceData[deviceId] = {
+                yaw: deviceYaw,
+                isOnline: true,
+                lat: status.lat,
+                lng: status.lng
+              };
               
               // Global referansa ekle
               window.deviceMarkers[deviceId] = newMarker;
@@ -1275,6 +1309,7 @@ const HomeScreen = () => {
             
             // Global marker ve polygon referansları
             window.deviceMarkers = {};
+            window.deviceData = {}; // Cihaz bilgilerini saklamak için (yaw, isOnline vb.)
             window.polygons = [];
             window.currentDrawingPolygon = null;
             window.drawingPoints = [];
@@ -1394,9 +1429,15 @@ const HomeScreen = () => {
             
             // Yönlü cihaz ikonu oluşturma fonksiyonu
             function createDirectionalDeviceIcon(yaw = 0, isOnline = true, isInsidePolygon = true) {
-                // Geçici olarak mavi renk
-                const color = '#3498db'; // Mavi renk
-                console.log('🎨 Icon rengi: MAVİ - sabit renk uygulandı');
+                // Renk belirleme - Polygon içindeyse yeşil, dışındaysa kırmızı
+                const color = isInsidePolygon ? '#27ae60' : '#e74c3c'; // Yeşil : Kırmızı
+                console.log('🎨 Icon oluşturuluyor:', {
+                    yaw: yaw,
+                    isOnline: isOnline,
+                    isInsidePolygon: isInsidePolygon,
+                    color: color,
+                    colorName: isInsidePolygon ? 'YEŞİL' : 'KIRMIZI'
+                });
                 
                 // Yaw değerini normalize et (0-360 arası)
                 const normalizedYaw = ((yaw % 360) + 360) % 360;
@@ -1418,33 +1459,47 @@ const HomeScreen = () => {
             
             // Cihazın polygon içinde olup olmadığını kontrol et
             function isDeviceInsideAnyPolygon(deviceLat, deviceLng) {
-                console.log('🔍 Alan kontrolü:', deviceLat, deviceLng);
+                console.log('🔍 Alan kontrolü başlıyor:', deviceLat, deviceLng);
                 
                 if (!window.polygons || window.polygons.length === 0) {
                     console.log('✅ Polygon yok, yeşil olacak');
                     return true; // Polygon yoksa yeşil olsun
                 }
                 
-                console.log('📐 Polygon sayısı:', window.polygons.length);
+                console.log('📐 Aktif polygon sayısı:', window.polygons.length);
                 
                 var point = L.latLng(deviceLat, deviceLng);
                 for (var i = 0; i < window.polygons.length; i++) {
                     var polygon = window.polygons[i];
+                    console.log('🔍 Polygon', i, 'kontrol ediliyor...', polygon);
+                    
                     if (polygon.leafletPolygon) {
-                        console.log('🔍 Polygon', i, 'kontrol ediliyor...');
+                        console.log('� Polygon leaflet objesi bulundu');
                         var polyPoints = polygon.leafletPolygon.getLatLngs()[0];
+                        console.log('📊 Polygon noktaları:', polyPoints.length, 'adet');
+                        console.log('📈 İlk 3 nokta:', polyPoints.slice(0, 3));
+                        
                         if (isPointInPolygon(point, polyPoints)) {
-                            console.log('✅ Cihaz polygon', i, 'içinde - YEŞİL');
+                            console.log('✅ Cihaz polygon', i, 'içinde - YEŞİL OLACAK');
                             return true;
+                        } else {
+                            console.log('❌ Cihaz polygon', i, 'dışında');
                         }
+                    } else {
+                        console.log('⚠️ Polygon', i, 'leafletPolygon objesi yok!');
                     }
                 }
-                console.log('❌ Cihaz hiçbir polygon içinde değil - KIRMIZI');
+                console.log('❌ Cihaz hiçbir polygon içinde değil - KIRMIZI OLACAK');
                 return false;
             }
             
             // Ray casting algoritması ile nokta-polygon kontrolü
             function isPointInPolygon(point, polygon) {
+                console.log('🎯 Point-in-polygon kontrolü:', {
+                    point: { lat: point.lat, lng: point.lng },
+                    polygonPointCount: polygon.length
+                });
+                
                 var x = point.lat, y = point.lng;
                 var inside = false;
                 
@@ -1457,32 +1512,67 @@ const HomeScreen = () => {
                     }
                 }
                 
+                console.log('🎯 Ray casting sonucu:', inside ? 'İÇERDE' : 'DIŞARDA');
                 return inside;
             }
             
             // Tüm cihaz marker'larının rengini güncelle
             function updateAllDeviceMarkerColors() {
-                if (window.deviceMarkers) {
+                console.log('🔄 Tüm cihaz renkleri güncelleniyor...');
+                console.log('📊 Mevcut durumlar:', {
+                    deviceMarkersCount: window.deviceMarkers ? Object.keys(window.deviceMarkers).length : 0,
+                    deviceDataCount: window.deviceData ? Object.keys(window.deviceData).length : 0,
+                    polygonsCount: window.polygons ? window.polygons.length : 0
+                });
+                
+                if (window.deviceMarkers && window.deviceData) {
                     Object.keys(window.deviceMarkers).forEach(deviceId => {
                         var marker = window.deviceMarkers[deviceId];
-                        if (marker) {
+                        if (marker && window.deviceData[deviceId]) {
                             var position = marker.getLatLng();
+                            console.log('🔍 Cihaz', deviceId, 'konumu:', position.lat, position.lng);
+                            
                             var isInside = isDeviceInsideAnyPolygon(position.lat, position.lng);
-                            // Mevcut yaw değerini koruyarak sadece rengi güncelle
-                            var currentIcon = marker.options.icon;
-                            // Yaw değerini tahmin et (rotation transform'dan)
-                            var yaw = 0; // Basit yaklaşım
-                            var updatedIcon = createDirectionalDeviceIcon(yaw, true, isInside);
+                            var deviceInfo = window.deviceData[deviceId];
+                            var yaw = deviceInfo.yaw || 0;
+                            var isOnline = deviceInfo.isOnline || true;
+                            
+                            console.log('📱 Cihaz', deviceId, 'son durum:', {
+                                isInside: isInside,
+                                yaw: yaw,
+                                isOnline: isOnline,
+                                finalColor: isInside ? 'YEŞİL' : 'KIRMIZI'
+                            });
+                            
+                            var updatedIcon = createDirectionalDeviceIcon(yaw, isOnline, isInside);
                             marker.setIcon(updatedIcon);
+                        } else {
+                            console.log('⚠️ Cihaz', deviceId, 'marker veya data eksik');
                         }
                     });
+                } else {
+                    console.log('⚠️ deviceMarkers veya deviceData mevcut değil!');
                 }
             }
             
-            // Varsayılan cihaz ikonu (eski sistem için backup)
-            var deviceIcon = createDirectionalDeviceIcon(0, true);
+            // Test fonksiyonu - Browser console'dan çağırılabilir
+            window.testDeviceColors = function() {
+                console.log('🧪 Cihaz renk testi başlatılıyor...');
+                updateAllDeviceMarkerColors();
+                
+                console.log('📊 Test sonuçları:');
+                if (window.deviceMarkers && window.deviceData) {
+                    Object.keys(window.deviceMarkers).forEach(deviceId => {
+                        var marker = window.deviceMarkers[deviceId];
+                        var position = marker.getLatLng();
+                        var isInside = isDeviceInsideAnyPolygon(position.lat, position.lng);
+                        console.log('Cihaz', deviceId + ':', isInside ? '🟢 YEŞİL' : '🔴 KIRMIZI');
+                    });
+                }
+            };
 
-            // Polygon verileri
+            // Varsayılan cihaz ikonu (eski sistem için backup)
+            var deviceIcon = createDirectionalDeviceIcon(0, true, true);            // Polygon verileri
             const polygonData = ${JSON.stringify(polygonsList)};
             const polygonPointsData = ${JSON.stringify(polygonPointsList)};
             
@@ -1723,6 +1813,12 @@ const HomeScreen = () => {
                         window.isDragging = false;
                         window.draggedPointIndex = null;
                         map.dragging.enable();
+                        
+                        // Polygon değiştiğinde cihaz renklerini güncelle
+                        console.log('🔄 Polygon değişti, cihaz renkleri güncelleniyor...');
+                        setTimeout(() => {
+                            updateAllDeviceMarkerColors();
+                        }, 100);
                     }
                 });
             }
@@ -1961,6 +2057,13 @@ const HomeScreen = () => {
                 // Cihaz için yönlü ikon oluştur
                 var deviceYaw${index} = ${deviceLoc.sensorData?.deviceSensorYaw || 0};
                 var deviceOnline${index} = ${deviceLoc.sensorData?.isOnline || false};
+                console.log('🚀 Cihaz ${deviceLoc.device.deviceId} ekleniyor:', {
+                    lat: ${deviceLoc.lat},
+                    lng: ${deviceLoc.lng},
+                    yaw: deviceYaw${index},
+                    online: deviceOnline${index}
+                });
+                
                 var isInside${index} = isDeviceInsideAnyPolygon(${deviceLoc.lat}, ${deviceLoc.lng});
                 var triangleIcon${index} = createDirectionalDeviceIcon(deviceYaw${index}, deviceOnline${index}, isInside${index});
                 
@@ -1969,6 +2072,14 @@ const HomeScreen = () => {
                 
                 // Global referansa ekle
                 window.deviceMarkers['${deviceLoc.device.deviceId}'] = deviceMarker${index};
+                
+                // Cihaz bilgilerini sakla
+                window.deviceData['${deviceLoc.device.deviceId}'] = {
+                    yaw: deviceYaw${index},
+                    isOnline: deviceOnline${index},
+                    lat: ${deviceLoc.lat},
+                    lng: ${deviceLoc.lng}
+                };
                 
                 var popupContent${index} = \`
                     <div class="device-popup">
@@ -2007,11 +2118,50 @@ const HomeScreen = () => {
             
             // Cihaza animasyonlu olarak gitme fonksiyonu
             window.flyToDevice = function(deviceLat, deviceLng, deviceName) {
-                console.log('Flying to device:', deviceName, 'at', deviceLat, deviceLng);
+                console.log('🎯 FlyToDevice çağrıldı:', deviceName, 'at', deviceLat, deviceLng);
+                
+                // Önce cihazın ekranda görünür olup olmadığını kontrol et
+                const currentBounds = map.getBounds();
+                const deviceLatLng = L.latLng(deviceLat, deviceLng);
+                const isDeviceVisible = currentBounds.contains(deviceLatLng);
+                
+                if (isDeviceVisible) {
+                    console.log('✅ Cihaz zaten ekranda görünüyor, flyTo işlemi iptal edildi:', deviceName);
+                    return; // Cihaz görünüyorsa flyTo yapma
+                }
+                
+                console.log('🚁 Cihaz ekranda görünmüyor, flyTo başlatılıyor:', deviceName);
+                
+                // Polygon'ların mevcut koordinatlarını sakla
+                const savedPolygonData = [];
+                if (window.polygons && window.polygons.length > 0) {
+                    window.polygons.forEach((polygon, index) => {
+                        if (polygon.leafletPolygon) {
+                            const latLngs = polygon.leafletPolygon.getLatLngs()[0];
+                            savedPolygonData.push({
+                                index: index,
+                                points: latLngs.map(latlng => ({lat: latlng.lat, lng: latlng.lng}))
+                            });
+                        }
+                    });
+                    console.log('📐 Polygon koordinatları saklandı:', savedPolygonData.length, 'polygon');
+                }
+                
+                // FlyTo işlemini gerçekleştir - daha yumuşak animasyon
                 map.flyTo([deviceLat, deviceLng], 18, {
                     animate: true,
-                    duration: 2.0 // 2 saniye animasyon
+                    duration: 1.5, // Daha hızlı animasyon
+                    easeLinearity: 0.1 // Daha linear animasyon
                 });
+                
+                // FlyTo tamamlandığında polygon'ları kontrol et ve gerekirse düzelt
+                setTimeout(() => {
+                    if (savedPolygonData.length > 0) {
+                        console.log('📐 FlyTo tamamlandı, polygon pozisyonları kontrol ediliyor...');
+                        // Polygon'ların pozisyonlarını kontrol et ve gerekirse düzelt
+                        // Bu kısım şimdilik sadece log için - polygon'lar kendiliğinden sabit kalmalı
+                    }
+                }, 1600); // Animasyon süresinden biraz sonra
             };
 
             // Polygon düzenleme fonksiyonlarını window objesine ata
@@ -2462,6 +2612,9 @@ const HomeScreen = () => {
           }
           
           console.log('🧹 Çizim modu temizlendi');
+          
+          // Polygon değişikliği sonrası cihaz renklerini güncelle
+          updateAllDeviceMarkerColors();
         `);
       }
 
@@ -2528,6 +2681,9 @@ const HomeScreen = () => {
                     } catch (error) {
                       console.error('Polygon haritadan kaldırılırken hata:', error);
                     }
+                    
+                    // Polygon silindikten sonra cihaz renklerini güncelle
+                    updateAllDeviceMarkerColors();
                   `);
                 }
 
@@ -2642,6 +2798,9 @@ const HomeScreen = () => {
                     } catch (error) {
                       console.error('❌ Polygonları haritadan kaldırırken hata:', error);
                     }
+                    
+                    // Tüm polygonlar silindikten sonra cihaz renklerini güncelle
+                    updateAllDeviceMarkerColors();
                   `);
                 }
                 
