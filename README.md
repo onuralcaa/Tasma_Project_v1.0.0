@@ -1,132 +1,242 @@
-# Tarım.NET Tasma - Akıllı Hayvan Takip Sistemi
+# Tarım.NET Tasma - Smart Animal Tracking System
 
-React Native tabanlı akıllı hayvan takip uygulaması. ESP32 cihazları ile hayvanların konumlarını gerçek zamanlı olarak takip eder ve güvenli alanlar oluşturarak hayvan güvenliğini sağlar.
+React Native-based intelligent animal tracking application. Real-time location tracking of animals using ESP32 devices, with secure geofencing capabilities to ensure animal safety.
 
-## Özellikler
+## License
 
-- Gerçek zamanlı hayvan konumu takibi
-- ESP32 cihazları ile sensör verisi alma
-- Güvenli alan çizimi ve yönetimi
-- Cihaz durumu izleme (çevrimiçi/çevrimdışı)
-- Hayvan ve cihaz yönetimi
-- Admin ve normal kullanıcı rolleri
-- Harita tabanlı görselleştirme
+MIT License
 
-## Gereksinimler
+Copyright (c) 2026 Tarım.NET
 
-### Sistem Gereksinimleri
-- Node.js (v16 veya üzeri)
-- npm veya yarn
-- Android Studio (Android geliştirme için)
-- Xcode (iOS geliştirme için - sadece macOS)
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-### Bağımlılıklar
-- React Native
-- Expo SDK
-- React Navigation
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Features
+
+- Real-time animal location tracking
+- Sensor data acquisition from ESP32 devices
+- Secure zone creation and management
+- Device status monitoring (online/offline)
+- Animal and device management
+- Admin and regular user roles
+- Map-based visualization
+- Geofencing and violation alerts
+- QR code device identification
+
+## Requirements
+
+### System Requirements
+- Node.js (v16 or higher)
+- npm or yarn
+- Android Studio (for Android development)
+- Xcode (for iOS development - macOS only)
+
+### Dependencies
+- React Native 0.79.5+
+- Expo SDK 53+
+- React Navigation 7.x
 - AsyncStorage
 - Expo Location
-- React Native WebView
+- Expo Camera
+- React Native Maps
 
-## Kurulum
+## Installation
 
-1. Projeyi bilgisayarınıza indirin:
+1. Clone the project to your computer:
 ```bash
-git clone [proje-url]
+git clone [project-url]
 cd Tasma
 ```
 
-2. Bağımlılıkları yükleyin:
+2. Install dependencies:
 ```bash
 npm install
 ```
 
-3. Expo CLI'yi global olarak yükleyin (eğer yoksa):
+3. Install Expo CLI globally (if not already installed):
 ```bash
 npm install -g @expo/cli
 ```
 
-## Çalıştırma
+## Running the Application
 
-### Geliştirme Sunucusunu Başlatma
+### Starting the Development Server
 ```bash
 npx expo start
 ```
 
-### Platform Seçenekleri
-- Android emülatör: `a` tuşuna basın
-- iOS simülatör: `i` tuşuna basın (sadece macOS)
-- Fiziksel cihaz: Expo Go uygulaması ile QR kod okutun//BUNU KULLAN...
+### Platform Options
+- Android emulator: Press `a`
+- iOS simulator: Press `i` (macOS only)
+- Physical device: Scan QR code with Expo Go app
 
-### Temiz Başlatma (Cache temizleme)
+### Clean Start (Clear Cache)
 ```bash
 npx expo start --clear
 ```
 
-## API Yapılandırması
+## API Configuration
 
-Uygulamanın düzgün çalışması için backend API'nin aktif olması gerekir. API endpoints'leri `services/` klasöründe tanımlanmıştır.
+The application requires an active backend API for proper functionality. API endpoints are defined in the `api/` directory.
 
-### Ana API Fonksiyonları
-- Kullanıcı girişi ve kimlik doğrulama
-- Hayvan verilerini getirme
-- Cihaz sensör verilerini alma
-- Güvenli alan (polygon) yönetimi
+### Backend Base URL
+- **Production:** `http://188.132.202.184:8080`
 
-## Kullanım
+### Main API Functions
+- User login and authentication
+- Fetch animal data
+- Retrieve device sensor data
+- Manage secure zones (polygons)
 
-1. Uygulamayı başlattıktan sonra giriş yapın
-2. Ana haritada cihazların konumlarını görün
-3. "Alan Çiz" butonu ile güvenli alanlar oluşturun
-4. Yan menüden hayvanları ve cihazları yönetin
-5. Gerçek zamanlı güncellemeler otomatik olarak alınır
-
-## Proje Yapısı
+## Project Structure
 
 ```
 Tasma/
-├── screens/          # Ekran bileşenleri
-├── services/         # API servisleri
-├── components/       # Yeniden kullanılabilir bileşenler
-├── assets/          # Görsel dosyalar
-└── App.js           # Ana uygulama dosyası
+├── App.js                          # Entry point - Auth state management
+├── index.js                        # Expo registration
+├── package.json                    # Dependencies and scripts
+├── app.json                        # Expo configuration
+├── api/                            # Backend API integration
+│   ├── auth.js                     # Authentication & JWT management
+│   ├── animal.js                   # Animal CRUD operations
+│   ├── device.js                   # Device CRUD operations
+│   ├── deviceSensor.js             # Real-time sensor data
+│   └── mockAuth.js                 # Mock authentication (unused)
+├── screens/                        # Application screens
+│   ├── SplashScreen.js             # Splash screen animation
+│   ├── LoginScreen.js              # User login
+│   ├── RegisterScreen.js           # User registration
+│   ├── HomeScreen.js               # Map with real-time tracking
+│   ├── AnimalsScreen.js            # Animal dashboard
+│   ├── AnimalListScreen.js         # Detailed animal list
+│   ├── AddAnimalScreen.js          # Add animal form
+│   ├── DevicesScreen.js            # Device overview
+│   ├── DeviceListScreen.js         # Device management
+│   └── AccountScreen.js            # User profile & logout
+├── navigation/                     # Navigation configuration
+│   ├── TabNavigator.js             # Bottom tab navigation
+│   └── AnimalStackNavigator.js     # Animal screen stack
+├── services/                       # Business logic services
+│   └── polygonService.js           # Geofence API calls
+├── utils/                          # Utility functions
+│   ├── storage.js                  # AsyncStorage & JWT utilities
+│   ├── axiosInstance.js            # Axios with interceptors
+│   └── debugHelper.js              # Debug utilities
+└── assets/                         # Images and resources
 ```
 
-## Önemli Notlar
+## Usage
 
-- Uygulamanın konum izinleri vermesi gerekir
-- Internet bağlantısı gereklidir
-- ESP32 cihazlarının API'ye veri göndermesi gerekir
-- Admin kullanıcıları tüm verileri görebilir
-- Normal kullanıcılar sadece kendi hayvanlarını görebilir
+1. Launch the application and log in with your credentials
+2. View device locations on the interactive map
+3. Create secure zones using the drawing tools
+4. Manage animals and devices from the side menu
+5. Receive real-time location updates automatically
 
-## Sorun Giderme
+## Key Features Explained
 
-### Sık Karşılaşılan Sorunlar
+### Authentication
+- JWT token-based login and registration
+- Automatic token renewal
+- Role-based access control (admin/user)
+- Secure token storage with AsyncStorage
 
-1. **Metro bundler çalışmıyor**: Cache temizleyin (`npx expo start --clear`)
-2. **API bağlantı hatası**: Backend servisinin çalıştığından emin olun
-3. **Konum alınamıyor**: Konum izinlerini kontrol edin
-4. **Harita yüklenmiyor**: Internet bağlantısını kontrol edin
+### Real-Time Tracking (HomeScreen)
+- Interactive map display
+- GPS location updates from ESP32 devices
+- 10-second refresh intervals for sensor data
+- Live data indication with pulse animation
+- Online/offline device status
 
-### Log Takibi
+### Geofencing System
+- Draw custom safe zones on the map
+- Create, update, and delete geofence areas
+- Real-time violation detection
+- Violation alerts and notifications
+- User-scoped zone management
+
+### Device Management
+- Add devices with MAC address validation
+- QR code scanner for device identification
+- Edit and delete device operations
+- Animal-device associations
+- Device online/offline tracking
+
+### Animal Management
+- Create, read, update, and delete animals
+- Associate animals with tracking devices
+- Role-based filtering (admin sees all, users see their own)
+
+## Important Notes
+
+- Location permissions are required for proper functionality
+- Active internet connection is necessary
+- ESP32 devices must send data to the API
+- Admin users can view all data
+- Regular users can only view their own animals
+- 60-second API request timeout is configured
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Metro bundler not working**: Clear cache with `npx expo start --clear`
+2. **API connection error**: Ensure the backend service is running
+3. **Location not available**: Check location permissions in your device settings
+4. **Map not loading**: Verify your internet connection
+
+### Viewing Logs
 ```bash
 npx expo start
-# Ardından konsolda hata mesajlarını takip edin
+# Monitor console for error messages
 ```
 
-## Derleme
+## Building for Production
 
-### Android APK Oluşturma
+### Build Android APK
 ```bash
 npx expo build:android
 ```
 
-### iOS IPA Oluşturma (sadece macOS)
+### Build iOS IPA (macOS only)
 ```bash
 npx expo build:ios
 ```
 
-## Lisans
+## Technology Stack
 
-Bu proje özel mülkiyettir. İzinsiz kullanım yasaktır.
+- **Frontend Framework:** React Native with Expo
+- **Navigation:** React Navigation v7+
+- **State Management:** React Hooks (useState, useEffect)
+- **HTTP Client:** Axios with JWT interceptors
+- **Local Storage:** AsyncStorage
+- **Location Services:** Expo Location
+- **Camera:** Expo Camera
+- **Backend:** .NET/C# REST API
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit pull requests or open issues for bugs and feature requests.
+
+## Support
+
+For support, please contact the development team or open an issue in the project repository.
+
+---
+
+**Made with ❤️ by Tarım.NET Team**
